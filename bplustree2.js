@@ -14,10 +14,23 @@ var BPlusTree = function( cfg ){
     apply( this, cfg );
     this.initNodes();
     this.root = new this.LeafNode();
+    this.root.root = true;
 };
 BPlusTree.prototype = {
     order: 3,
     internal: true,
+    get: function (key) {
+        var node = this._search(key);
+        var data = node.data,i = data.length;
+        for(;i;)
+            if(data[--i].key == key)
+                return data[i].val;
+        return false;
+    },
+    getOne: function (key) {
+        var val = this.get(key);
+        return val === false ? false : val[0];
+    },
     initNodes: function(  ){
 
         this.LeafNode = function(){LeafNode.call(this);};
@@ -28,7 +41,8 @@ BPlusTree.prototype = {
             low: this.low,
             compare: this.compare,
             LeafNode: this.LeafNode,
-            InternalNode: this.InternalNode
+            InternalNode: this.InternalNode,
+            root: false
         }, LeafNode.prototype);
 
         this.InternalNode.prototype = apply({
@@ -36,7 +50,8 @@ BPlusTree.prototype = {
             low: this.low,
             compare: this.compare,
             LeafNode: this.LeafNode,
-            InternalNode: this.InternalNode
+            InternalNode: this.InternalNode,
+            root: false
         }, InternalNode.prototype);
     },
     getter: function( value ){
@@ -47,20 +62,19 @@ BPlusTree.prototype = {
     },
     insert: function( value ){
         var key = this.getter(value);
-        var node = this._search(value);
+        var node = this._search(key);
         this.root = node.insert(key, value) || this.root;
+        this.check();
     },
     _search: function( key ){
         var node = this.root, found,
-            data,
+            keys,
             i, _i, compare = this.compare, cmp;
         while( node.internal ){
             found = false;
-            data = node.data;
-            for( i = 0, _i = data.length; i < _i; i++ ){
-                cmp = compare(key, data[i].key);
-                if(cmp === 0)
-                    return node;
+            keys = node.keys;
+            for( i = 0, _i = keys.length; i < _i; i++ ){
+                cmp = compare(key, keys[i]);
                 if( cmp < 0){
                     node = node.links[i];
                     found = true;
@@ -94,6 +108,22 @@ BPlusTree.prototype = {
                 }
             }
         }
+        return false;
+    },
+    check: function () {
+        var nodes = [this.root], node;
+        while(nodes.length){
+            node = nodes.shift();
+            if(node.leaf){
+
+            }else{
+                if(node.links.filter(function (el) {
+                    return el.parentNode !== node;
+                }).length)
+                    throw new Error('someshit');
+                nodes.push.apply(nodes,node.links);
+            }
+        }
     },
     dump: function (el) {
         var out = {}, stringify;
@@ -101,7 +131,7 @@ BPlusTree.prototype = {
             stringify = el;
             el = this.root;
         }
-        out.data = el.data.map(function (el) {
+        out.data = el.keys || el.data.map(function (el) {
             return el.key;
         }).join(', ');
         el.links && (out.links = el.links.map(this.dump.bind(this)));
@@ -110,23 +140,6 @@ BPlusTree.prototype = {
 };
 var LeafNode = function(){
     this.data = [];
-};
-var splitFn = function(){
-    var tmp = new this[this.leaf?'LeafNode':'InternalNode'](),
-        data = this.data,
-        median = Math.floor(data.length/2),
-        centerNode = data[median];
-    tmp.data = data.splice(0,median);
-    data.splice(0,1);
-    tmp.parentNode = this.parentNode;
-    tmp.nextNode = this;
-    tmp.prevNode = this.prevNode;
-    if(tmp.links)
-        tmp.links = this.links.splice(0,median+1);
-    if( tmp.prevNode )
-        tmp.prevNode.nextNode = tmp;
-    this.prevNode = tmp;
-    return (this.parentNode = tmp.parentNode = this.parentNode || new this.InternalNode()).insert(centerNode, tmp, this);
 };
 LeafNode.prototype = {
     leaf: true,
@@ -149,104 +162,228 @@ LeafNode.prototype = {
         if( data.length > this.order)
             return this.split();
     },
-    split: splitFn,
-    balance: function( key ){
-        var parent = this.parentNode;
-        if(!parent)
-            return;
-        var low = this.low;
-        if(this.prevNode){
-            if(this.prevNode.data.length > low){
-
-            }
-        }
-
-        this.prevNode && (this.prevNode.nextNode = this.nextNode);
-        this.nextNode && (this.nextNode.prevNode = this.prevNode);
-        var i, _i, data = parent.data,
-            compare = this.compare;
+    split: function(){
+        var tmp = new this.LeafNode(),
+            data = this.data,
+            median = Math.floor(data.length/2),
+            centerNode = data[median+1].key;
+        tmp.data = data.splice(0,median+1);
+        tmp.nextNode = this;
+        tmp.prevNode = this.prevNode;
+        if( tmp.prevNode )
+            tmp.prevNode.nextNode = tmp;
+        this.prevNode = tmp;
+        this.root = false;
+        return (this.parentNode = tmp.parentNode = this.parentNode || new this.InternalNode()).insert(centerNode, tmp, this);
+    },
+    remove: function (key) {
+        var i, _i, data = this.data, compare = this.compare,
+            obj, cmp, found = false,
+            low, node, rightKey, firstKey,
+            neighborL, neighborR, items;
         for( i = 0, _i = data.length; i < _i; i++ ){
-            if( compare(data[i].key, key) > 0 )break;
+            cmp = compare(data[i].key, key);
+            if( cmp === 0 ){
+                found = true;
+                break;
+            }
         }
-        _i--;
-        if(i===0){
-            var first = this.nextNode.data[0];
-            this.nextNode.remove(first.key);
-            parent.links.splice(i, 1);
-            parent.insert(first.key,first.val);
-        }else if(i<_i){
+        if( !found )
+            return false;
+        data.splice(i,1);
+
+        low = this.low;
+
+        if(data.length>=low) {
+            if(i>0)
+                return;
+            node = this;
+            firstKey = this.data[0].key;
+            while(node = node.parentNode){
+                if ((_i = node.keys.indexOf(key) ) > -1)
+                    node.keys[_i] = firstKey;
+            }
+            return ;
+        }
+        // less
+        if(this.root){
+            // collapse root
+            return ;
+        }
+        if( (neighborL = this.prevNode) && (_i = neighborL.data.length) > low){
+            // borrow left
+            data.unshift.apply(
+                data,
+                neighborL.data.splice(low+((_i - low)>>1))
+            );
+            node = this;
+            firstKey = this.data[0].key;
+            while(node = node.parentNode){
+                if ((_i = node.keys.indexOf(key) ) > -1)
+                    node.keys[_i] = firstKey;
+            }
+
+            return ;
+        }
+
+        if( (neighborR = this.nextNode) && (_i = neighborR.data.length) > low){
+            // borrow right
+            key = neighborR.data[0].key;
+            data.push.apply(
+                data,
+                neighborR.data.splice(0,low-((_i - low)>>1))
+            );
+            //debugger;
+            node = neighborR;
+            rightKey = neighborR.data[0].key;
+            while(node = node.parentNode){
+                if ((_i = node.keys.indexOf(key) ) > -1)
+                    node.keys[_i] = rightKey;
+            }
+            return ;
+        }
+
+        // merge
+        if(neighborL){
+            // left
+            key = i === 0 ? key : this.data[0].key;
+            node = neighborL.merge(
+                this,
+                this.parentNode,
+                key
+            );
+        }else{
+            // right
+            key = neighborR.data[0].key
+            node = this.merge(neighborR, this.parentNode, key)
+        }
+        if(this.parentNode.root && !this.parentNode.keys.length){
+            return node;
+        }
+        //debugger;
+        node = this;
+        var parent;
+
+        while(node = node.parentNode){
+            neighborR = false;
+            neighborL = false;
+            parent = node.parentNode;
+
+            if( node.keys.length < low ){
+
+                i = Math.max(parent.keys.indexOf(key),0);
+                neighborR = i === parent.keys.length ? false : parent.links[i+1];
+                if(neighborR!== false && neighborR.keys.length > low){
+                    node.keys.push(parent.keys.splice(i,1,node.shift()));
+                    node.links.push(neighborR.links.shift());
+                    break;
+                }
+                neighborL = i === 0 ? false :parent.links[i-1];
+                if(neighborL!== false && neighborL.keys.length > low){
+                    node.unshift(parent.keys.splice(i-1,1,neighborL.keys.pop()));
+                    node.links.unshift(neighborL.links.pop());
+                    break;
+                }
+                if(neighborL!== false){
+                    key = neighborL.merge(node,parent,i-1);
+                    node = neighborL;
+                }else if(neighborR!==false){
+                    key = node.merge(neighborR,parent,i);
+                }
+            }
+            if(parent && !parent.keys.length && !parent.parentNode){
+                return node;
+            }
+
 
         }
     },
-    remove: function( key ){
-        var data = this.data, i,
-            _i = data.length, low = this.low;
-        for( i = 0; i < _i; i++ ){
-            if( data[i].key == key ){
-                data.splice(i,1);
-                return data.length === low && this.balance(key);
-            }
-        }
-    },
-    merge: function( right ){
+    merge: function (what, parent, key) {
+        console.log('merge', key)
+        var i, _i, keys = parent.keys;
+        this.data = this.data.concat.apply(this.data,what.data);
+        if(this.nextNode = what.nextNode)
+            what.prevNode = this;
+        i = keys.indexOf(key);
+        keys.splice(i,1);
+        parent.links.splice(i+1,1);
+        return this;
     }
 };
-var InternalNode = function( order ){
-    this.data = [];
+var InternalNode = function(){
+    this.keys = [];
     this.links = [];
 };
+var push = Array.prototype.push;
 InternalNode.prototype = {
     internal: true,
     leaf: false,
-    balance: function(  ){
+    merge: function (node, parent, i) {
+        var key = parent.keys[i];
+        this.keys.push(key);
+        push.apply(this.keys, node.keys);
+        push.apply(this.links, node.links);
+        parent.keys.splice(i,1);
+        parent.links.splice(i+1,1);
+        //parent.keys.pop();
+        //parent.links.pop();
+        return key;
     },
-    split: splitFn,
-    insert: function( centerNode, leftNode, rightNode ){
-        var data = this.data,
-            key = centerNode.key,
+    split: function () {
+
+        var tmp = new this.InternalNode(),
+            keys = this.keys,
+            median = Math.floor(keys.length/2),
+            centerNode = keys[median], i, links;
+
+        tmp.links = this.links.splice(0,median+1);
+        tmp.keys = keys.splice(0,median);
+        keys.shift();
+
+        // fix links
+        links = tmp.links;
+        for(i=links.length;i;)
+            links[--i].parentNode = tmp;
+
+
+        return (this.parentNode = tmp.parentNode = this.parentNode || new this.InternalNode()).insert(centerNode, tmp, this);
+    },
+    insert: function( key, leftNode, rightNode ){
+        var keys = this.keys,
             links = this.links,
             order = this.order,
             i, _i,
             compare = this.compare,
             cmp;
-        if(arguments.length === 2){
-            key = centerNode;
-        }
-        if( data.length ){
+        if( keys.length ){
 
-            for( i = 0, _i = data.length; i < _i; i++ ){
-                cmp = compare(data[i].key, key);
+            for( i = 0, _i = keys.length; i < _i; i++ ){
+                cmp = compare(keys[i], key);
                 if( cmp === 0){
-                    data[i].val.push( leftNode );
+                    keys[i].val.push( leftNode );
                     return;
                 }
                 if( cmp > 0 ) break;
             }
 
-            if( data[i] ){
-                data.splice( i, 0, centerNode );
+            if( keys[i] ){
+                keys.splice( i, 0, key );
                 links.splice( i, 0, leftNode );
             }else{
                 links[i] = leftNode;
                 links[i+1] = rightNode;
-                data.push( centerNode );
+                keys.push( key );
             }
 
-            if( data.length > order ){
+            if( keys.length > order ){
                 return this.split();
             }
             return;
         }else{
-            this.data[0] = centerNode;
+            this.keys[0] = key;
             this.links = [leftNode, rightNode];
             return this;
         }
-    },
-    merge: function( right, separator ){
-    },
-    remove: function( key ){
-    },
-    tryCollapse: function(){
     }
 };
 /*

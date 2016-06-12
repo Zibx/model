@@ -26,4 +26,4 @@ View:
 3. Filter collection
   3.1 index
   3.2 map
-  3.3 f6t7ilter
+  3.3 filter
