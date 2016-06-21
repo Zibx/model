@@ -79,11 +79,11 @@ module.exports = (function(){
             if(notFound){
                 //console.error(lastKey,node,name,val)
                 node[lastKey] = val;
-                this.emit('set', name, val, void 0)
+                this.emit('set', name, val, void 0);
             }else{
                 if(oldValue !== val){
                     node[lastKey] = val;
-                    this.emit('change', name, val, oldValue)
+                    this.emit('change', name, val, oldValue);
                 }
             }
             return this;
@@ -180,7 +180,7 @@ module.exports = (function(){
                 for(i = path.length; i;)
                     this.on(path[--i],fn,type);
             else
-                (listeners[path] = listeners[path] || []).push({type: type, fn: fn});
+                (listeners[path] = listeners[path] || []).push({type: type, fn: fn, path: path});
         },
         un: function (path, fn, type) {
             var listeners = this._pathListeners, i;
@@ -202,7 +202,7 @@ module.exports = (function(){
             for( i = 0, _i = listeners.length; i < _i; i++ ){
                 listener = listeners[i];
                 (listener.type === void 0 || listener.type === type) &&
-                    listener.fn.call(this, val, type, oldVal);
+                    listener.fn.call(this, val, type, oldVal, listener.path);
             }
         },
         fire: function (type) { // cmps observer
