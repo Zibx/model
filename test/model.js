@@ -48,12 +48,24 @@ describe('basic model tests', function () {
         m.set('c.2', 18);
     });
 
+    it("should be extendable",function(){
+        var m = model({a: 1, b:2, items: [1,2,3,4]});
+        var items = m.deep('items');
+
+        var extendedItems = items.extend();
+        console.log(items);
+        extendedItems.set(4,8);
+        console.log(extendedItems.get("length"));
+        console.log(extendedItems);
+    });
+
     it('should get deeper', function () {
-        var m = model({a: 1, b:2, items: [1,2,3]}),
+        var m = model({a: 1, b:2, items: [1,2,3,4]}),
             items = m.deep('items');
         assert.equal(items.get(0),1);
         assert.equal(items.get(1),2);
         assert.equal(items.get(2),3);
+
         m.observe('set', function(name, newVal, oldVal){
                 assert.equal(name, 'items.3');
                 assert.equal(newVal, 6);
